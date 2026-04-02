@@ -110,15 +110,6 @@ function install_package_deps() {
 }
 
 function install_shiftfs() {
-	if [[ -r /etc/os-release ]]; then
-		# shellcheck source=/dev/null
-		source /etc/os-release
-	fi
-	if [[ "${ID:-}" == "amzn" ]]; then
-		echo "Skipping shiftfs installation on Amazon Linux (DKMS/apt path not supported; id-mapped mounts cover recent kernels)."
-		return
-	fi
-
 	# If shiftfs is not needed, skip
 	if ! shiftfs_needed; then
 		echo "Skipping shiftfs installation (kernel has id-mapped mounts support)."
