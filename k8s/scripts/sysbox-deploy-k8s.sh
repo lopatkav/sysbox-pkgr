@@ -167,13 +167,13 @@ function deploy_kubelet_config_service() {
 
 	echo "Running Kubelet config agent on the host (will restart Kubelet and temporary bring down all pods on this node for ~1 min) ..."
 	systemctl daemon-reload
-	systemctl restart kubelet-config-helper.service
+	systemctl restart kubelet-config-helper.service || echo "kubelet-config-helper restart may have failed; continuing"
 }
 
 function remove_kubelet_config_service() {
 	echo "Stopping the Kubelet config agent on the host ..."
-	systemctl stop kubelet-config-helper.service
-	systemctl disable kubelet-config-helper.service
+	systemctl stop kubelet-config-helper.service || echo "kubelet-config-helper stop may have failed; continuing"
+	systemctl disable kubelet-config-helper.service || echo "kubelet-config-helper disable may have failed; continuing"
 
 	echo "Removing Kubelet config agent from the host ..."
 	rm -f ${host_local_bin}/kubelet-config-helper.sh
@@ -279,6 +279,11 @@ function get_artifacts_dir() {
 		[[ "$distro" == "ubuntu-21.10" ]] ||
 		[[ "$distro" == "ubuntu-20.04" ]] ||
 		[[ "$distro" == "ubuntu-18.04" ]] ||
+		[[ "$distro" == "centos" ]] ||
+		[[ "$distro" == "centos-7" ]] ||
+		[[ "$distro" == "amzn" ]] ||
+		[[ "$distro" == "amzn-2" ]] ||
+		[[ "$distro" == "amzn-2023" ]] ||
 		[[ "$distro" =~ "debian" ]]; then
 		artifacts_dir="${sysbox_artifacts}/bin/generic"
 	elif [[ "$distro" =~ "flatcar" ]]; then
@@ -361,7 +366,7 @@ function rm_systemd_units_from_host() {
 function apply_sysbox_env_config() {
 	# Note: this requires CAP_SYS_ADMIN on the host
 	echo "Configuring host sysctls ..."
-	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf"
+	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf" || echo "sysctl apply may have failed (e.g. missing userns); continuing"
 }
 
 function start_sysbox() {
@@ -685,26 +690,40 @@ function config_containerd_for_sysbox() {
 		sysbox_runc_path="/opt/bin/sysbox-runc"
 	fi
 
-	# Check if sysbox-runc runtime section already exists
-	if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
-		echo "sysbox-runc runtime already configured in containerd config"
-	else
-		echo "Configuring sysbox-runc runtime in containerd config ..."
+	local did_configure=false
 
-		# Set the runtime_type
+	# containerd 2.x + config schema v2: kubelet uses io.containerd.cri.v1.runtime (legacy grpc path is ignored).
+	# https://github.com/nestybox/sysbox/issues/997
+	if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
+		echo "Configuring sysbox-runc runtime under io.containerd.cri.v1.runtime (containerd 2.x CRI) ..."
+		dasel put string -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.runtime_type" \
+			-v "io.containerd.runc.v2"
+		dasel put string -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.BinaryName" \
+			-v "${sysbox_runc_path}"
+		dasel put bool -f "${host_containerd_conf_file}" -p toml \
+			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
+			-v true
+		did_configure=true
+	fi
+
+	if grep -q "io.containerd.grpc.v1.cri" "${host_containerd_conf_file}"; then
+		echo "Configuring sysbox-runc runtime under io.containerd.grpc.v1.cri (legacy CRI) ..."
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.runtime_type" \
 			-v "io.containerd.runc.v2"
-
-		# Set BinaryName option
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.BinaryName" \
 			-v "${sysbox_runc_path}"
-
-		# Set SystemdCgroup option
 		dasel put bool -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
 			-v true
+		did_configure=true
+	fi
+
+	if [ "$did_configure" = false ]; then
+		echo "WARNING: no known containerd CRI plugin section found; sysbox-runc was not registered"
 	fi
 
 	echo "Restarting containerd to apply changes ..."
@@ -715,13 +734,17 @@ function unconfig_containerd_for_sysbox() {
 	echo "Removing Sysbox from containerd config ..."
 
 	if [ -f "${host_containerd_conf_file}" ]; then
-		# Check if sysbox-runc runtime configuration exists
 		if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
 			echo "Removing sysbox-runc runtime configuration ..."
 
-			# Delete the entire sysbox-runc runtime section using dasel
-			dasel delete -f "${host_containerd_conf_file}" -p toml \
-				-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc"
+			if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
+				dasel delete -f "${host_containerd_conf_file}" -p toml \
+					-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc" 2>/dev/null || true
+			fi
+			if grep -q "io.containerd.grpc.v1.cri" "${host_containerd_conf_file}"; then
+				dasel delete -f "${host_containerd_conf_file}" -p toml \
+					-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc" 2>/dev/null || true
+			fi
 
 			echo "Restarting containerd to apply changes ..."
 			systemctl restart containerd
@@ -773,8 +796,10 @@ function get_container_runtime() {
 }
 
 function get_host_distro() {
-	local distro_name=$(grep -w "^ID" "$host_os_release" | cut -d "=" -f2)
-	local version_id=$(grep -w "^VERSION_ID" "$host_os_release" | cut -d "=" -f2 | tr -d '"')
+	# shellcheck source=/dev/null
+	source "$host_os_release"
+	local distro_name="${ID}"
+	local version_id="${VERSION_ID}"
 	echo "${distro_name}-${version_id}"
 }
 
@@ -813,6 +838,11 @@ function is_supported_distro() {
 		[[ "$distro" == "ubuntu-20.04" ]] ||
 		[[ "$distro" == "ubuntu-18.04" ]] ||
 		[[ "$distro" =~ "debian" ]] ||
+		[[ "$distro" =~ "amzn" ]] ||
+		[[ "$distro" =~ "amzn-2" ]] ||
+		[[ "$distro" =~ "centos" ]] ||
+		[[ "$distro" =~ "centos-7" ]] ||
+		[[ "$distro" =~ "amzn-2023" ]] ||
 		[[ "$distro" =~ "flatcar" ]]; then
 		return
 	fi

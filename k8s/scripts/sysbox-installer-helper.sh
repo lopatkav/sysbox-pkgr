@@ -85,7 +85,20 @@ function semver_ge() {
 	fi
 }
 
+function install_package_deps_rpm() {
+	echo "Installing package dependencies via dnf (Amazon Linux / RPM-based host)..."
+	dnf install -y ca-certificates rsync fuse3 iptables
+}
+
 function install_package_deps() {
+	if [[ -r /etc/os-release ]]; then
+		# shellcheck source=/dev/null
+		source /etc/os-release
+	fi
+	if [[ "${ID:-}" == "amzn" ]]; then
+		install_package_deps_rpm
+		return
+	fi
 
 	# Need this to work-around "E: dpkg was interrupted, you must manually run 'dpkg --configure -a' to correct the problem."
 	dpkg --configure -a
@@ -97,6 +110,15 @@ function install_package_deps() {
 }
 
 function install_shiftfs() {
+	if [[ -r /etc/os-release ]]; then
+		# shellcheck source=/dev/null
+		source /etc/os-release
+	fi
+	if [[ "${ID:-}" == "amzn" ]]; then
+		echo "Skipping shiftfs installation on Amazon Linux (DKMS/apt path not supported; id-mapped mounts cover recent kernels)."
+		return
+	fi
+
 	# If shiftfs is not needed, skip
 	if ! shiftfs_needed; then
 		echo "Skipping shiftfs installation (kernel has id-mapped mounts support)."
