@@ -364,8 +364,7 @@ function rm_systemd_units_from_host() {
 function apply_sysbox_env_config() {
 	# Note: this requires CAP_SYS_ADMIN on the host
 	echo "Configuring host sysctls ..."
-	# -e: ignore unknown keys (e.g. kernel.unprivileged_userns_clone absent on kernel 6.4+)
-	sysctl -e -p "${host_sysctl}/99-sysbox-sysctl.conf"
+	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf"
 }
 
 function start_sysbox() {
@@ -693,12 +692,15 @@ function config_containerd_for_sysbox() {
 	# https://github.com/nestybox/sysbox/issues/997
 	if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
 		echo "Configuring sysbox-runc runtime under io.containerd.cri.v1.runtime (containerd 2.x CRI) ..."
+		# Set the runtime_type
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.runtime_type" \
 			-v "io.containerd.runc.v2"
+		# Set BinaryName option
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.BinaryName" \
 			-v "${sysbox_runc_path}"
+		# Set SystemdCgroup option
 		dasel put bool -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
 			-v true
@@ -706,12 +708,18 @@ function config_containerd_for_sysbox() {
 
 	if grep -q "io.containerd.grpc.v1.cri" "${host_containerd_conf_file}"; then
 		echo "Configuring sysbox-runc runtime under io.containerd.grpc.v1.cri (legacy CRI) ..."
+
+		# Set the runtime_type
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.runtime_type" \
 			-v "io.containerd.runc.v2"
+
+		# Set BinaryName option
 		dasel put string -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.BinaryName" \
 			-v "${sysbox_runc_path}"
+
+		# Set SystemdCgroup option
 		dasel put bool -f "${host_containerd_conf_file}" -p toml \
 			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
 			-v true
@@ -725,9 +733,12 @@ function unconfig_containerd_for_sysbox() {
 	echo "Removing Sysbox from containerd config ..."
 
 	if [ -f "${host_containerd_conf_file}" ]; then
+		# Check if sysbox-runc runtime configuration exists
 		if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
 			echo "Removing sysbox-runc runtime configuration ..."
 
+			# Delete the entire sysbox-runc runtime section using dasel
+			# (containerd 2.x may use io.containerd.cri.v1.runtime and/or io.containerd.grpc.v1.cri).
 			if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
 				dasel delete -f "${host_containerd_conf_file}" -p toml \
 					-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc" 2>/dev/null || true
@@ -1079,13 +1090,7 @@ function install_precheck() {
 	# check if we need to install CRI-O or not
 	runtime_precheck
 
-	# When set (true/yes/1), always run install_sysbox_deps + install_sysbox + containerd/CRI config,
-	# even if sysbox.service is already active and no version/kernel/config change was detected.
-	if [[ "${SYSBOX_FORCE_FULL_INSTALL:-}" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|1)$ ]]; then
-		echo "SYSBOX_FORCE_FULL_INSTALL is set; running full install path."
-		do_sysbox_install="true"
-		do_sysbox_update="true"
-	elif systemctl is-active --quiet sysbox; then
+	if systemctl is-active --quiet sysbox; then
 		do_sysbox_install="false"
 	fi
 
@@ -1188,6 +1193,13 @@ function do_edition_adjustments() {
 function do_distro_adjustments() {
 
 	local distro=$(get_host_distro)
+
+	# Amazon Linux (EKS): newer kernels (e.g. 6.12) may not expose kernel.unprivileged_userns_clone;
+	# comment out so sysctl application does not fail before other keys run.
+	if [[ "${distro}" =~ "amzn" ]]; then
+		sed -i '/^kernel.unprivileged_userns_clone/ s/^#*/# /' ${sysbox_artifacts}/systemd/99-sysbox-sysctl.conf
+	fi
+
 	if [[ ! ${distro} =~ "flatcar" ]]; then
 		return
 	fi
