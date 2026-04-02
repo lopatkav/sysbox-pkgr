@@ -167,13 +167,13 @@ function deploy_kubelet_config_service() {
 
 	echo "Running Kubelet config agent on the host (will restart Kubelet and temporary bring down all pods on this node for ~1 min) ..."
 	systemctl daemon-reload
-	systemctl restart kubelet-config-helper.service || echo "kubelet-config-helper restart may have failed; continuing"
+	systemctl restart kubelet-config-helper.service
 }
 
 function remove_kubelet_config_service() {
 	echo "Stopping the Kubelet config agent on the host ..."
-	systemctl stop kubelet-config-helper.service || echo "kubelet-config-helper stop may have failed; continuing"
-	systemctl disable kubelet-config-helper.service || echo "kubelet-config-helper disable may have failed; continuing"
+	systemctl stop kubelet-config-helper.service
+	systemctl disable kubelet-config-helper.service
 
 	echo "Removing Kubelet config agent from the host ..."
 	rm -f ${host_local_bin}/kubelet-config-helper.sh
@@ -279,8 +279,6 @@ function get_artifacts_dir() {
 		[[ "$distro" == "ubuntu-21.10" ]] ||
 		[[ "$distro" == "ubuntu-20.04" ]] ||
 		[[ "$distro" == "ubuntu-18.04" ]] ||
-		[[ "$distro" == "centos" ]] ||
-		[[ "$distro" == "centos-7" ]] ||
 		[[ "$distro" == "amzn" ]] ||
 		[[ "$distro" == "amzn-2" ]] ||
 		[[ "$distro" == "amzn-2023" ]] ||
@@ -366,7 +364,7 @@ function rm_systemd_units_from_host() {
 function apply_sysbox_env_config() {
 	# Note: this requires CAP_SYS_ADMIN on the host
 	echo "Configuring host sysctls ..."
-	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf" || echo "sysctl apply may have failed (e.g. missing userns); continuing"
+	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf"
 }
 
 function start_sysbox() {
@@ -840,8 +838,6 @@ function is_supported_distro() {
 		[[ "$distro" =~ "debian" ]] ||
 		[[ "$distro" =~ "amzn" ]] ||
 		[[ "$distro" =~ "amzn-2" ]] ||
-		[[ "$distro" =~ "centos" ]] ||
-		[[ "$distro" =~ "centos-7" ]] ||
 		[[ "$distro" =~ "amzn-2023" ]] ||
 		[[ "$distro" =~ "flatcar" ]]; then
 		return
