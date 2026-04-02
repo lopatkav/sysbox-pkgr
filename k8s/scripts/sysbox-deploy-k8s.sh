@@ -364,7 +364,8 @@ function rm_systemd_units_from_host() {
 function apply_sysbox_env_config() {
 	# Note: this requires CAP_SYS_ADMIN on the host
 	echo "Configuring host sysctls ..."
-	sysctl -p "${host_sysctl}/99-sysbox-sysctl.conf"
+	# -e: ignore unknown keys (e.g. kernel.unprivileged_userns_clone absent on kernel 6.4+)
+	sysctl -e -p "${host_sysctl}/99-sysbox-sysctl.conf"
 }
 
 function start_sysbox() {
@@ -1078,7 +1079,13 @@ function install_precheck() {
 	# check if we need to install CRI-O or not
 	runtime_precheck
 
-	if systemctl is-active --quiet sysbox; then
+	# When set (true/yes/1), always run install_sysbox_deps + install_sysbox + containerd/CRI config,
+	# even if sysbox.service is already active and no version/kernel/config change was detected.
+	if [[ "${SYSBOX_FORCE_FULL_INSTALL:-}" =~ ^([Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|1)$ ]]; then
+		echo "SYSBOX_FORCE_FULL_INSTALL is set; running full install path."
+		do_sysbox_install="true"
+		do_sysbox_update="true"
+	elif systemctl is-active --quiet sysbox; then
 		do_sysbox_install="false"
 	fi
 
