@@ -688,41 +688,46 @@ function config_containerd_for_sysbox() {
 		sysbox_runc_path="/opt/bin/sysbox-runc"
 	fi
 
-	# containerd 2.x + config schema v2: kubelet uses io.containerd.cri.v1.runtime (legacy grpc path is ignored).
-	# https://github.com/nestybox/sysbox/issues/997
-	if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
-		echo "Configuring sysbox-runc runtime under io.containerd.cri.v1.runtime (containerd 2.x CRI) ..."
-		# Set the runtime_type
-		dasel put string -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.runtime_type" \
-			-v "io.containerd.runc.v2"
-		# Set BinaryName option
-		dasel put string -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.BinaryName" \
-			-v "${sysbox_runc_path}"
-		# Set SystemdCgroup option
-		dasel put bool -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
-			-v true
-	fi
+	# Check if sysbox-runc runtime section already exists
+	if grep -q "runtimes.sysbox-runc" "${host_containerd_conf_file}"; then
+		echo "sysbox-runc runtime already configured in containerd config"
+	else
+		# containerd 2.x + config schema v2: kubelet uses io.containerd.cri.v1.runtime (legacy grpc path is ignored).
+		# https://github.com/nestybox/sysbox/issues/997
+		if grep -q "io.containerd.cri.v1.runtime" "${host_containerd_conf_file}"; then
+			echo "Configuring sysbox-runc runtime under io.containerd.cri.v1.runtime (containerd 2.x CRI) ..."
+			# Set the runtime_type
+			dasel put string -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.runtime_type" \
+				-v "io.containerd.runc.v2"
+			# Set BinaryName option
+			dasel put string -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.BinaryName" \
+				-v "${sysbox_runc_path}"
+			# Set SystemdCgroup option
+			dasel put bool -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.cri\.v1\.runtime.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
+				-v true
+		fi
 
-	if grep -q "io.containerd.grpc.v1.cri" "${host_containerd_conf_file}"; then
-		echo "Configuring sysbox-runc runtime under io.containerd.grpc.v1.cri (legacy CRI) ..."
+		if grep -q "io.containerd.grpc.v1.cri" "${host_containerd_conf_file}"; then
+			echo "Configuring sysbox-runc runtime under io.containerd.grpc.v1.cri (legacy CRI) ..."
 
-		# Set the runtime_type
-		dasel put string -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.runtime_type" \
-			-v "io.containerd.runc.v2"
+			# Set the runtime_type
+			dasel put string -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.runtime_type" \
+				-v "io.containerd.runc.v2"
 
-		# Set BinaryName option
-		dasel put string -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.BinaryName" \
-			-v "${sysbox_runc_path}"
+			# Set BinaryName option
+			dasel put string -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.BinaryName" \
+				-v "${sysbox_runc_path}"
 
-		# Set SystemdCgroup option
-		dasel put bool -f "${host_containerd_conf_file}" -p toml \
-			-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
-			-v true
+			# Set SystemdCgroup option
+			dasel put bool -f "${host_containerd_conf_file}" -p toml \
+				-s "plugins.io\.containerd\.grpc\.v1\.cri.containerd.runtimes.sysbox-runc.options.SystemdCgroup" \
+				-v true
+		fi
 	fi
 
 	echo "Restarting containerd to apply changes ..."
